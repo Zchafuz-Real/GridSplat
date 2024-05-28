@@ -3,7 +3,15 @@ import torch
 from sklearn.neighbors import NearestNeighbors
 import time
 class OccuGrid:
-    def __init__(self, resolution, num_samples, device, factor = None, bd = 2):
+    def __init__(self, 
+                 resolution, 
+                 num_samples, 
+                 device, 
+                 factor = None,
+                 bd = 2,
+                 min_temp = 1.5,
+                 max_temp = 3.0,
+                 ema_decay = 0.9):
         self.grid = torch.ones((resolution, resolution, resolution)).to(device)
         self.resolution = resolution
         self.num_samples = num_samples
@@ -15,11 +23,11 @@ class OccuGrid:
         self.fixed_min = self.bd * torch.tensor([-0.5, -0.5, -0.5], device=self.device)
         self.fixed_max = self.bd * torch.tensor([0.5, 0.5, 0.5], device=self.device)
         self._weights = torch.ones((resolution, resolution, resolution)).to(device)
-        self.ema_decay = 0.9
+        self.ema_decay = ema_decay
         self.center = torch.tensor([0.5, 0.5, 0.5], device=self.device)
         self.temperature = 3.0
-        self.min_temperature = 1.5 # 1
-        self.max_temperature = 3.0
+        self.min_temperature = min_temp 
+        self.max_temperature = max_temp
     def update(self, xyz):    
         normalized_pcd = self.normalize(xyz)
     

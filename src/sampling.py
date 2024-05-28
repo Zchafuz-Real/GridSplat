@@ -44,7 +44,10 @@ class ImportanceSampling(SamplingStrategy):
                              config["num_samples"],
                              config["device"],
                              config["factor"],
-                             bd = config["bd"])
+                             bd = config["bd"],
+                             min_temp = config["min_temp"],
+                             max_temp = config["max_temp"],
+                             ema_decay = config["ema_decay"])
 
     def update_and_sample(self, iter, xyz, weights):
         if iter % self.sample_every == 0:

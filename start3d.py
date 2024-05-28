@@ -6,7 +6,7 @@ import torch
 import optuna
 
 test_config = {
-    "name": "importance_lego_high_iter",
+    "name": "importance_dog_high_iter_small_mlp",
     "data": "../examples/data/hotdog/",
     "gaussians" : {
         "image_path" : "../../cactus2.jpg",
@@ -25,8 +25,8 @@ test_config = {
         "max_freq" : 19.0,
         "n_freq" : 20,
         "scale": 10,
-        "shared_hidden_dim" : 1024,
-        "hidden_dim" : 512,
+        "shared_hidden_dim" : 512,
+        "hidden_dim" : 256,
         "num_layers": 6,
         "weight_init": True,
         "skip_connections": [1, 4],
@@ -53,6 +53,9 @@ test_config = {
         "num_samples": 40000,
         "filter": False,
         "randomize": False,
+        "min_temp": 2.0,
+        "max_temp": 3.0,
+        "ema_decay": 0.2,
         "alt": False,
         "allow_logging": True,
         "factor": 3,
@@ -83,7 +86,7 @@ test_config = {
     },
     "data_loader": {
         "convert_NS_way": True,
-        "background_color": "white",
+        "background_color": "white", #this probably should always be white
         "image_type": "uint8"
     }
 }
