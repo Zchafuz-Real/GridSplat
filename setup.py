@@ -17,7 +17,8 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'start3d=start3d:main'
+            'start3d=start3d:main',
+            'eval_model=eval_model:main'
         ]
     }
 )

@@ -90,6 +90,15 @@ class DynamicMLP(nn.Module):
         os.makedirs(out_dir, exist_ok = True)
         with open(os.path.join(out_dir, 'mlp_config.json'), 'w') as f:
             json.dump(config_data, f)
+    
+    def save_model_state(self, grid_params):
+        import os
+        import pickle
+        out_dir = os.path.join(os.getcwd(), "data_log", self.experiment_name)
+        os.makedirs(out_dir, exist_ok = True)
+        torch.save(self.state_dict(), os.path.join(out_dir, 'model_state.pth'))
+        with open(os.path.join(out_dir, 'grid_params.pkl'), 'wb') as f:
+            pickle.dump(grid_params, f)
         
     def build_nn_modules(self):
         layers = []

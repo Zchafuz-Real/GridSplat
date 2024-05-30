@@ -15,7 +15,8 @@ from gsplat.rasterize import rasterize_gaussians
 class ViserViewer:
     def __init__(self, port, host = None, occugrid = None, 
                  cameras = None, images = None, bg_color = None,
-                 grid = None):
+                 grid = None, is_training_mode = True,
+                 model = None, grid_parameters = None):
         
         if host is not None:
             self.server = viser.ViserServer(port = port, host = host)
@@ -28,241 +29,58 @@ class ViserViewer:
         
         self.grid = occugrid
         
-        
-        self.is_start = True
-        self.is_paused = True
-        self.is_finished = False
-        self.is_recording = False
-        
         self.grids = []
         self.images = []
         
+        self.background_color = bg_color.to(self.device)
         self.low_color = torch.Tensor([0, 0, 255]).to(self.device)
         self.high_color = torch.Tensor([255, 0, 0]).to(self.device)
-        
-        self.init_message = self.server.add_gui_text("Weight For Initialization",
-                                                     initial_value="Weight For Initialization")
-        self.start_button = self.server.add_gui_button("Start")
-        self.pause_button = self.server.add_gui_button("Pause")
-        self.resume_button = self.server.add_gui_button("Resume")
-        self.start_record_button = self.server.add_gui_button("Start Recording")
-        self.stop_record_button = self.server.add_gui_button("Stop Recording")
-        self.download_file = self.server.add_gui_button("Download GIF")
-        self.finished_button = self.server.add_gui_button("Finished")
-        self.rgb_button = self.server.add_gui_button("RGB")
-        self.opacity_button = self.server.add_gui_button("Opacity")
-        self.combined_button = self.server.add_gui_button("Combined")
-        self.scales_button = self.server.add_gui_button("Scales")
-        self.snapshot_button = self.server.add_gui_button("Snap")
-        self.stop_update_button = self.server.add_gui_button("Stop Update") 
-        self.resume_update_button = self.server.add_gui_button("Resume Update")
-        
-        self.randomize_checkbox = self.server.add_gui_checkbox(
-            "Randomize",
-            initial_value = True
-        )
-        
-        self.snapshot_button.visible = True       
-        self.combined_button.visible = True
-        self.scales_button.visible = True
-        self.opacity_button.visible = True
-        self.start_button.visible = False
-        self.resume_button.visible = False
-        self.pause_button.visible = False
-        self.finished_button.visible = False
-        self.start_record_button.visible = False
-        self.stop_record_button.visible = False
-        self.rgb_button.visible = False
-        self.stop_update_button.visible = True
-        self.resume_update_button.visible = False
-        
-        self.grid_visibility = self.server.add_gui_checkbox(
-            "Grid",
-            initial_value = False
-        )
-        
-        self.gui_plane = self.server.add_gui_dropdown(
-            "Plane",
-            ("xy", "xz", "yz")
-        ) 
         self.plane_dict = {
             "xz": lambda x: (0.5, x, 0.5),
             "yz": lambda x: (x, 0.5, 0.5),
             "xy": lambda x: (0.5, 0.5, x)
         }
         
-        self.opacity_slider = self.server.add_gui_slider(
-            "opacity_threshold",
-            min = 0.0,
-            max = 1.0,
-            step = 0.01,
-            initial_value = 0.5
-        )
-        
-        self.scales_slider = self.server.add_gui_slider(
-            "scale_threshold",
-            min = 0.0,
-            max = 1.0,
-            step = 0.01,
-            initial_value = 0.5
-        )
-        
-        self.n_samples_slider = self.server.add_gui_slider(
-            "n_samples",
-            min = 1,
-            max = 100000,
-            step = 1,
-            initial_value = self.grid.num_samples
-        )
-
-        self.grid_sliders = {
-            "cell_thickness": self.add_slider_grid("cell_thickness", 0.1, 2.0, 0.1, 0.5),
-            "section_thickness": self.add_slider_grid("section_thickness", 0.0, 1.0, 0.1, 0.0),
-            "cell_size": self.add_slider_grid("cell_size", 0.1, 1.0, 0.1, 0.5),
-        }
-        self.point_size = self.server.add_gui_slider(
-            "point_size",
-            min = 0.001,
-            max = 0.05,
-            step = 0.001,
-            initial_value = 0.02
-        )
-        self.update_interval = self.server.add_gui_slider(
-            "update_interval",
-            min = 0.01,
-            max = 10,
-            step = 0.01,
-            initial_value = 3
-        )
-
-        self.take_snapshot = False
-        @self.snapshot_button.on_click
-        def _(_):
-            self.take_snapshot = not self.take_snapshot        
-        
-        @self.start_button.on_click
-        def _(_):
-            if self.is_start:
-                self.is_paused = False
-                self.is_start = False
-                self.start_button.visible = False
-                self.pause_button.visible = True
-            else:
-                self.is_paused = False
-                self.pause_button.visible = True
-                self.resume_button.visible = False
-
-        @self.pause_button.on_click
-        def _(_):
-            self.is_paused = True
-            self.pause_button.visible = False
-            self.resume_button.visible = True
-            print("Training Paused")
+        if is_training_mode:
+            self.init_train_buttons()
+            self.init_train_sliders()
+            self.init_train_other_gui()
             
-        @self.resume_button.on_click
-        def _(_):
-            self.is_paused = False
-            self.pause_button.visible = True
-            self.resume_button.visible = False
+            self.initialize_temp()
+            self.init_train_scene(cameras, images)
+            self.init_message.visible = False
+            self.init_train_model_display()
+        elif not is_training_mode:
+            self.rgb_chosen = True
+            self.means_values = None
+            self.rgb_values = None
+            self.sampled_points = None
+            self.initialize_with_model(model, grid_parameters)
+            self.init_eval_scene(cameras, images) 
+            
+            self.init_eval_buttons()
+            self.init_eval_sliders()
+            self.init_eval_other_gui()
+            
+            self.init_eval_model_display()
         
-        @self.grid_visibility.on_update
-        def _(_):
-            if self.grid_visibility.value == False:
-                for grid in self.grids:
-                    grid.remove()
-            elif self.grid_visibility.value == True:
-                self.create_3d_grid()
-        
-        @self.finished_button.on_click
-        def _(_):
-            self.is_finished = True
-        
-        @self.download_file.on_click
-        def _(event) -> None:
-            self.send_gif(event)
-         
-        @self.start_record_button.on_click
-        def _(_):
-            self.is_recording = not self.is_recording
-            self.start_record_button.visible = False
-            self.stop_record_button.visible = True
-        @self.stop_record_button.on_click
-        def _(_):
-            self.is_recording = not self.is_recording
-            self.stop_record_button.visible = False
-            self.start_record_button.visible = True
-        
-        self.let_update = True
-        @self.stop_update_button.on_click
-        def _(_):
-            self.let_update = False
-            self.resume_update_button.visible = True
-            self.stop_update_button.visible = False
-            self.best_cameras = [[i, float("inf")] for i in range(3)]
-            self.worst_cameras = [[i, float("-inf")] for i in range(3)]
-            self.updated_best = [False for _ in range(3)]
-            self.updated_worst = [False for _ in range(3)]
-        @self.resume_update_button.on_click
-        def _(_):
-            self.let_update = not self.let_update    
-            self.resume_update_button.visible = False
-            self.stop_update_button.visible = True
-        
-        self.rgb_chosen = True
-        self.opacities_chosen = False
-        self.combined_chosen = False
-        self.scales_chosen = False
-        
-        self.point_size.on_update(lambda _: self.create_3d_grid())
-        self.gui_plane.on_update(lambda _: self.create_3d_grid())
-        
-        #if occugrid is not None:
-        #    self.initialize_with_grid(occugrid)
-        #else:
-        self.initialize_temp()
-        
-        self.background_color = bg_color.to(self.device)
-        self.cameras = cameras
-        self.camera_handles: Dict[int,
-                                  viser.CameraFrustumHandle,
-                                  float,
-                                  onp.array] = {}
-        self.gt_images = images
-        self.initialize_cameras()
-        self.initialize_cameras_on_scene()
-        self.init_message.visible = False
-        self.start_button.visible = True
-        self.start_record_button.visible = True
-        self.best_cameras = [[i, float("inf")] for i in range(3)]   
-        self.worst_cameras = [[i, float("-inf")] for i in range(3)]
-        self.updated_best = [False for _ in range(3)]
-        self.updated_worst = [False for _ in range(3)]
-        
-        @self.rgb_button.on_click
-        def _(_):
-            self.set_visibility('rgb', ['combined', 'opacity', 'scales'], ['rgb'])
-        @self.opacity_button.on_click
-        def _(_):
-            self.set_visibility('opacities', ['rgb', 'scales', 'combined'], ['opacities'])
-        @self.scales_button.on_click
-        def _(_):
-            self.set_visibility('scales', ['rgb', 'opacity', 'combined'], ['scales'])
-        @self.combined_button.on_click
-        def _(_):
-            self.set_visibility('combined', ['rgb', 'opacity', 'scales'], ['combined'])    
-
-        self.client = None 
-        @self.server.on_client_connect
-        def _(client):
-            self.client = client
-            @self.client.camera.on_update
-            def _(_):
-                if self.take_snapshot:
-                    with self.client.atomic():
-                        self.display_image(self.client)
-                
-        
-        
+    
+    def run_eval(self):
+        while True:
+            time.sleep(0.1)
+          
+    def initialize_with_model(self, model, grid_parameters):   
+        self.model = model
+        grid_weights, resolution, num_samples, ema_decay, temp, min_temp, max_temp = grid_parameters
+        self.grid = OccuGrid(resolution,
+                        num_samples,
+                        device = self.device,
+                        ema_decay = ema_decay,
+                        min_temp = min_temp,
+                        max_temp = max_temp)
+        self.grid.grid = grid_weights
+        self.grid.temperature = temp
+                     
         
     def set_visibility(self, chosen_button, visible_buttons, invisible_buttons):
         self.opacities_chosen = chosen_button == 'opacities'
@@ -458,6 +276,37 @@ class ViserViewer:
             with client.atomic():
                 if self.take_snapshot:
                     self.display_image(client)
+    
+    def sample_points(self):
+        self.grid.num_samples = self.n_samples_slider.value
+        #xyz = self.grid.sample(randomize = self.randomize_checkbox.value)
+        xyz = self.grid.importance_sample(randomize = self.randomize_checkbox.value)
+        xyz = self.grid.reverse_normalize(xyz)  
+        return xyz 
+    
+    def display_eval_image(self, xyz, client):
+        model = self.model
+        model.eval()
+
+        with torch.no_grad():
+            quats, rgbs, opacities , scales = model(xyz)
+
+        image = self.create_image(client, xyz, quats, rgbs, opacities, scales)
+        
+        #normalize forward vector with numpy
+        
+        f_v = client.camera.position - client.camera.look_at
+        norm = onp.linalg.norm(f_v) 
+        f_v =  1.2 * (f_v / norm)
+        #offset_to_front = 0.9 * f_v
+        
+        #print(offset_to_front)
+        self.client.add_image("/image",
+                            image.detach().cpu().numpy(),
+                            position = client.camera.position - f_v,
+                            wxyz = client.camera.wxyz,
+                            render_width=0.6,
+                            render_height=0.6)
         
     
     def display_image(self, client):
@@ -472,6 +321,8 @@ class ViserViewer:
             xyz = self.grid.reverse_normalize(xyz)
             
             quats, rgbs, opacities , scales = model(xyz)
+
+                
         image = self.create_image(client, xyz, quats, rgbs, opacities, scales)
         
         #normalize forward vector with numpy
@@ -543,7 +394,7 @@ class ViserViewer:
         
         
     def display_rgb(self, means, rgb):
-
+        means, rgb = self.subsample_points(self.n_samples_slider.value, means, rgb)
         means = means.detach().cpu().numpy()
         rgb = rgb.detach().cpu().numpy()
         self.rgbs = self.add_points("/colors",
@@ -688,9 +539,277 @@ class ViserViewer:
             time.sleep(0.1)
             
             
+    def init_train_buttons(self):
+        self.is_start = True
+        self.is_paused = True
+        self.is_finished = False
+        self.is_recording = False
+        
+        self.init_message = self.server.add_gui_text("Weight For Initialization",
+                                                     initial_value="Weight For Initialization")
+        self.start_button = self.server.add_gui_button("Start")
+        self.pause_button = self.server.add_gui_button("Pause")
+        self.resume_button = self.server.add_gui_button("Resume")
+        self.start_record_button = self.server.add_gui_button("Start Recording")
+        self.stop_record_button = self.server.add_gui_button("Stop Recording")
+        self.download_file = self.server.add_gui_button("Download GIF")
+        self.finished_button = self.server.add_gui_button("Finished")
+        self.rgb_button = self.server.add_gui_button("RGB")
+        self.opacity_button = self.server.add_gui_button("Opacity")
+        self.combined_button = self.server.add_gui_button("Combined")
+        self.scales_button = self.server.add_gui_button("Scales")
+        self.snapshot_button = self.server.add_gui_button("Snap")
+        self.stop_update_button = self.server.add_gui_button("Stop Update") 
+        self.resume_update_button = self.server.add_gui_button("Resume Update")
             
+        self.snapshot_button.visible = True       
+        self.combined_button.visible = True
+        self.scales_button.visible = True
+        self.opacity_button.visible = True
+        self.start_button.visible = False
+        self.resume_button.visible = False
+        self.pause_button.visible = False
+        self.finished_button.visible = False
+        self.start_record_button.visible = False
+        self.stop_record_button.visible = False
+        self.rgb_button.visible = False
+        self.stop_update_button.visible = True
+        self.resume_update_button.visible = False    
+        self.let_update = True
+        self.take_snapshot = False
             
+        self.rgb_chosen = True
+        self.opacities_chosen = False
+        self.combined_chosen = False
+        self.scales_chosen = False
+        self.start_button.visible = True
+        self.start_record_button.visible = True
+        
+        @self.start_button.on_click
+        def _(_):
+            if self.is_start:
+                self.is_paused = False
+                self.is_start = False
+                self.start_button.visible = False
+                self.pause_button.visible = True
+            else:
+                self.is_paused = False
+                self.pause_button.visible = True
+                self.resume_button.visible = False
+        
+        @self.snapshot_button.on_click
+        def _(_):
+            self.take_snapshot = not self.take_snapshot        
+        
+        @self.pause_button.on_click
+        def _(_):
+            self.is_paused = True
+            self.pause_button.visible = False
+            self.resume_button.visible = True
+            print("Training Paused")
             
+        @self.resume_button.on_click
+        def _(_):
+            self.is_paused = False
+            self.pause_button.visible = True
+            self.resume_button.visible = False
             
-                
-                
+        @self.finished_button.on_click
+        def _(_):
+            self.is_finished = True
+        
+        @self.download_file.on_click
+        def _(event) -> None:
+            self.send_gif(event)
+         
+        @self.start_record_button.on_click
+        def _(_):
+            self.is_recording = not self.is_recording
+            self.start_record_button.visible = False
+            self.stop_record_button.visible = True
+        @self.stop_record_button.on_click
+        def _(_):
+            self.is_recording = not self.is_recording
+            self.stop_record_button.visible = False
+            self.start_record_button.visible = True
+            
+        @self.stop_update_button.on_click
+        def _(_):
+            self.let_update = False
+            self.resume_update_button.visible = True
+            self.stop_update_button.visible = False
+            self.best_cameras = [[i, float("inf")] for i in range(3)]
+            self.worst_cameras = [[i, float("-inf")] for i in range(3)]
+            self.updated_best = [False for _ in range(3)]
+            self.updated_worst = [False for _ in range(3)]
+        @self.resume_update_button.on_click
+        def _(_):
+            self.let_update = not self.let_update    
+            self.resume_update_button.visible = False
+            self.stop_update_button.visible = True
+        
+        @self.rgb_button.on_click
+        def _(_):
+            self.set_visibility('rgb', ['combined', 'opacity', 'scales'], ['rgb'])
+        @self.opacity_button.on_click
+        def _(_):
+            self.set_visibility('opacities', ['rgb', 'scales', 'combined'], ['opacities'])
+        @self.scales_button.on_click
+        def _(_):
+            self.set_visibility('scales', ['rgb', 'opacity', 'combined'], ['scales'])
+        @self.combined_button.on_click
+        def _(_):
+            self.set_visibility('combined', ['rgb', 'opacity', 'scales'], ['combined'])
+    
+    def init_train_sliders(self):
+        self.opacity_slider = self.server.add_gui_slider(
+            "opacity_threshold",
+            min = 0.0,
+            max = 1.0,
+            step = 0.01,
+            initial_value = 0.5
+        )
+        
+        self.scales_slider = self.server.add_gui_slider(
+            "scale_threshold",
+            min = 0.0,
+            max = 1.0,
+            step = 0.01,
+            initial_value = 0.5
+        )
+        
+        self.n_samples_slider = self.server.add_gui_slider(
+            "n_samples",
+            min = 1,
+            max = 100000 + 100000,
+            step = 1,
+            initial_value = self.grid.num_samples
+        )
+
+        self.grid_sliders = {
+            "cell_thickness": self.add_slider_grid("cell_thickness", 0.1, 2.0, 0.1, 0.5),
+            "section_thickness": self.add_slider_grid("section_thickness", 0.0, 1.0, 0.1, 0.0),
+            "cell_size": self.add_slider_grid("cell_size", 0.1, 1.0, 0.1, 0.5),
+        }
+        self.point_size = self.server.add_gui_slider(
+            "point_size",
+            min = 0.001,
+            max = 0.05,
+            step = 0.001,
+            initial_value = 0.02
+        )
+        self.update_interval = self.server.add_gui_slider(
+            "update_interval",
+            min = 0.01,
+            max = 10,
+            step = 0.01,
+            initial_value = 3
+        )
+        
+        self.point_size.on_update(lambda _: self.create_3d_grid())
+    
+    def init_eval_buttons(self):
+        self.sample_button = self.server.add_gui_button("Sample")
+        
+        @self.sample_button.on_click
+        def _(_):
+            self.sampled_points = self.sample_points()
+            self.display_eval_image(self.sampled_points, self.client)
+    
+    def init_eval_sliders(self):
+        self.n_samples_slider = self.server.add_gui_slider(
+            "n_samples",
+            min = 1,
+            max = 100000 + 100000,
+            step = 1,
+            initial_value = self.grid.num_samples
+        )
+        self.point_size = self.server.add_gui_slider(
+            "point_size",
+            min = 0.001,
+            max = 0.05,
+            step = 0.001,
+            initial_value = 0.02
+        )
+      
+    def init_train_other_gui(self):
+        self.randomize_checkbox = self.server.add_gui_checkbox(
+            "Randomize",
+            initial_value = True
+        )
+        
+        self.grid_visibility = self.server.add_gui_checkbox(
+            "Grid",
+            initial_value = False
+        )
+        
+        self.gui_plane = self.server.add_gui_dropdown(
+            "Plane",
+            ("xy", "xz", "yz")
+        ) 
+        
+        @self.grid_visibility.on_update
+        def _(_):
+            if self.grid_visibility.value == False:
+                for grid in self.grids:
+                    grid.remove()
+            elif self.grid_visibility.value == True:
+                self.create_3d_grid()
+          
+        self.gui_plane.on_update(lambda _: self.create_3d_grid())
+    
+    def init_eval_other_gui(self):
+        self.randomize_checkbox = self.server.add_gui_checkbox(
+            "Randomize",
+            initial_value = True
+        )
+    
+    
+    def init_train_scene(self, cameras, images):
+        self.cameras = cameras
+        self.gt_images = images
+        self.camera_handles: Dict[int,
+                                  viser.CameraFrustumHandle,
+                                  float,
+                                  onp.array] = {}
+        
+        self.initialize_cameras()
+        self.initialize_cameras_on_scene()
+
+        self.best_cameras = [[i, float("inf")] for i in range(3)]   
+        self.worst_cameras = [[i, float("-inf")] for i in range(3)]
+        self.updated_best = [False for _ in range(3)]
+        self.updated_worst = [False for _ in range(3)]
+    
+    def init_eval_scene(self, cameras, images):
+        self.cameras = cameras
+        self.gt_images = images
+        self.camera_handles: Dict[int,
+                                  viser.CameraFrustumHandle,
+                                  float,
+                                  onp.array] = {}
+        
+        self.initialize_cameras()
+        self.initialize_cameras_on_scene()
+    
+    def init_train_model_display(self):
+        self.client = None 
+        @self.server.on_client_connect
+        def _(client):
+            self.client = client
+            @self.client.camera.on_update
+            def _(_):
+                if self.take_snapshot:
+                    with self.client.atomic():
+                        self.display_image(self.client)
+    
+    def init_eval_model_display(self):
+        self.client = None 
+        @self.server.on_client_connect
+        def _(client):
+            self.client = client
+            @self.client.camera.on_update
+            def _(_):
+                with self.client.atomic():
+                    if self.sampled_points != None:
+                        self.display_eval_image(self.sampled_points, self.client)

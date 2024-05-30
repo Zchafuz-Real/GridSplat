@@ -17,28 +17,36 @@ def load_from_json(filename):
         return json.load(file)
       
 class Experiment:
-    def __init__(self, experiment_config, idx):
+    def __init__(self, experiment_config = None, idx = None, data_file=None):
 
-        if experiment_config['name']:
-            self.experiment_name = f"{experiment_config['name']}_{str(idx)}" 
-        else:    
-            self.experiment_name = datetime.now().strftime("%Y-%m-%d_%H-%M_%S") + "_" + str(idx)
+        if idx == None:
+            self.data_file = Path(data_file)
+            self.data_loader_config = experiment_config
+            self.device = "cuda:0"
+            self.scale_factor = 1
+            self.data = self.load_data()
+            self.data_loader = DataLoader(self.data_loader_config, self.data, self.device)
+        else:  
+            if experiment_config['name']:
+                self.experiment_name = f"{experiment_config['name']}_{str(idx)}" 
+            else:    
+                self.experiment_name = datetime.now().strftime("%Y-%m-%d_%H-%M_%S") + "_" + str(idx)
 
-        if experiment_config["training"]["image_type"] != experiment_config["data_loader"]["image_type"]:
-            print("Warning: Image type in training and data loader are different")
-            print("Setting image type in training to image type in data loader")
-        experiment_config["training"]["image_type"] = experiment_config["data_loader"]["image_type"]
-        self.experiment_config = experiment_config
-        self.data_file = Path(self.experiment_config["data"])
-        self.scale_factor = 1.0
-        
-        self.gaussians_config = experiment_config['gaussians']
-        self.model_config = experiment_config['model']
-        self.training_config = experiment_config['training']
-        self.data_loader_config = experiment_config['data_loader']
-        self.device = self.training_config['device']
+            if experiment_config["training"]["image_type"] != experiment_config["data_loader"]["image_type"]:
+                print("Warning: Image type in training and data loader are different")
+                print("Setting image type in training to image type in data loader")
+            experiment_config["training"]["image_type"] = experiment_config["data_loader"]["image_type"]
+            self.experiment_config = experiment_config
+            self.data_file = Path(self.experiment_config["data"])
+            self.scale_factor = 1.0
+            
+            self.gaussians_config = experiment_config['gaussians']
+            self.model_config = experiment_config['model']
+            self.training_config = experiment_config['training']
+            self.data_loader_config = experiment_config['data_loader']
+            self.device = self.training_config['device']
 
-        self.data = self.load_data()
+            self.data = self.load_data()
 
     def setup_environment(self):
         print("Setup environment")

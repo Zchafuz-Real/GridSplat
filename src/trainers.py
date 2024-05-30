@@ -53,7 +53,7 @@ class TrainerClassic:
         self.gt_image = gaussians.gt_image
         self.image_type = config['image_type']
         self.ssim = SSIM(data_range=1.0, size_average=True, channel=3)
-        
+
         self.iterations = config['iterations']
         self.mean_lr = config['mean_lr']
         self.mlp_lr = config['mlp_lr']
@@ -106,9 +106,10 @@ class TrainerClassic:
             self.xys = None
             self.allow_logging = True
             self.datalogger = datalogger
+            self.save_model = config["save_model"]
         else:
             self.allow_logging = False
-
+            self.save_model = config["save_model"]
         if config['strategy'] == 'pool':
             self.sampling_strategy.initiate_pool(self.gaussians.means)
         
@@ -137,6 +138,7 @@ class TrainerClassic:
                 bg_color = copy.deepcopy(self.view_background),
                 grid = {"resolution": self.config["resolution"],
                         "num_samples": self.config["num_samples"]}
+                #is_training_mode = True
             )
         
     def disable_means_optimization(self):
@@ -147,21 +149,22 @@ class TrainerClassic:
         
     def create_image(self):
         #self.gaussians.means = self.sampling_strategy.occu_grid.reverse_normalize(self.gaussians.means)
-        background = self.background.to(self.device)
-        R = self.c2w[:3, :3]
-        T = self.c2w[:3, 3:4]
-        R_edit = torch.diag(torch.tensor([1, -1, -1], device=self.device, dtype=R.dtype))
-    
-        R = R @ R_edit
-        R_inv = R.T
-        T_inv = -R_inv @ T
-        viewmat = torch.eye(4, device=R.device, dtype=R.dtype)
-        viewmat[:3, :3] = R_inv
-        viewmat[:3, 3:4] = T_inv
-        viewmat.requires_grad = False
-
-        W, H = int(self.gaussians.W), int(self.gaussians.H)
+        with torch.no_grad():
+            background = self.background.to(self.device)
+            R = self.c2w[:3, :3]
+            T = self.c2w[:3, 3:4]
+            R_edit = torch.diag(torch.tensor([1, -1, -1], device=self.device, dtype=R.dtype))
         
+            R = R @ R_edit
+            R_inv = R.T
+            T_inv = -R_inv @ T
+            viewmat = torch.eye(4, device=R.device, dtype=R.dtype)
+            viewmat[:3, :3] = R_inv
+            viewmat[:3, 3:4] = T_inv
+            viewmat.requires_grad = False
+
+            W, H = int(self.gaussians.W), int(self.gaussians.H)
+            
         xys, depths, radii, conics, compensation, num_tiles_hit, cov3d = project_gaussians(
                 self.gaussians.means,
                 self.gaussians.scales,
@@ -195,13 +198,14 @@ class TrainerClassic:
                 background,
             )
         self.background = background
+            
         return out_img
 
     def calculate_bg_penalty(self, image, bg_color):
         diff = 1 - torch.abs(bg_color - image)
         penalty = diff.mean()
         return penalty
-    
+
     def ssim_L1_loss(self, pred_img):
         lamba = self.config["lamba"]
         Ll1 = torch.abs(self.gt_image - pred_img).mean()
@@ -243,19 +247,14 @@ class TrainerClassic:
                 print("first iter")
                 self.gaussians.means  = self.sampling_strategy.update_and_sample(iter,
                                                                                 self.gaussians.means.detach()) """
-                                                                                
-        self.gaussians.means  = self.sampling_strategy.update_and_sample(iter,
-                                                                  self.gaussians.means.detach(),
-                                                                  self.gaussians.opacities.detach())
-
-        #if iter == 3500:
-        #    print("resetting weights")
-        #    self.reinitialize_weights(self.model.opacity_head)                                                          
-                                                                               
+        with torch.no_grad():
+            self.gaussians.means  = self.sampling_strategy.update_and_sample(iter,
+                                                                    self.gaussians.means,
+                                                                    self.gaussians.opacities)
         start = time.time()
         self.update_features()
         self.times[0].append(time.time() - start)
-
+          
         start = time.time()
         pred_img = self.create_image()
         self.times[1].append(time.time() - start)
@@ -278,8 +277,9 @@ class TrainerClassic:
         
         for iter in range(self.iterations):
             self.model.train()
+             
             image, camera_to_world, intrinsics, self.camera_idx  = self.dataloader.next_train()
-            
+             
             if self.image_type == "uint8":
                 self.gt_image = image.float() / 255.0
             elif self.image_type == "float32":
@@ -291,7 +291,10 @@ class TrainerClassic:
             if iter == self.allow_means_opptimization_iter:
                 self.disable_means_optimization()
 
+             
             outputs = self.train_step(iter)
+             
+
             if trial is not None and iter == 1000:
                 trial.report(outputs["loss"], iter)
                 if trial.should_prune():
@@ -305,6 +308,7 @@ class TrainerClassic:
             self.mlp_optimizer.zero_grad()
             self.optimizer_means.zero_grad() 
             
+             
             if self.allow_logging:
                 start = time.time()
                 self.datalogger.log_iter_data(iter, 
@@ -319,6 +323,7 @@ class TrainerClassic:
                                          )
                 self.times[3].append(time.time() - start)
         
+             
             if self.viewer_enabled:
                 self.viewer.update(
                     outputs["loss"],
@@ -330,7 +335,8 @@ class TrainerClassic:
                     self.gaussians.scales,
                     self.model
                 )
-                
+             
+
         if self.allow_logging:
             self.datalogger.log_post_iter_data(self.gaussians.means, 
                                                self.gaussians.rgbs,
@@ -347,7 +353,19 @@ class TrainerClassic:
             print(f'update: {update_time}, image: {image_time}, loss: {loss_time}')
         if self.viewer_enabled:
             self.viewer.idle()
-            
+        
+        if self.save_model:
+            grid_params = {
+                "resolution": self.sampling_strategy.occu_grid.resolution,
+                "num_samples": self.sampling_strategy.occu_grid.num_samples,
+                "grid": self.sampling_strategy.occu_grid.grid,
+                "ema_decay": self.sampling_strategy.occu_grid.ema_decay,
+                "temp": self.sampling_strategy.occu_grid.temperature,
+                "min_temp": self.sampling_strategy.occu_grid.min_temperature,
+                "max_temp": self.sampling_strategy.occu_grid.max_temperature,
+            }
+            self.model.save_model_state(grid_params)
+        
         return outputs["loss"]
     
     

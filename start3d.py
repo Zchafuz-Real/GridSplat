@@ -6,7 +6,7 @@ import torch
 import optuna
 
 test_config = {
-    "name": "importance_dog_high_iter_small_mlp",
+    "name": "testing",
     "data": "../examples/data/hotdog/",
     "gaussians" : {
         "image_path" : "../../cactus2.jpg",
@@ -22,8 +22,8 @@ test_config = {
         "use_positional_encoding" : True,
         "input_encoding": "positional", #old positional fourier
         "min_freq" : 0,
-        "max_freq" : 19.0,
-        "n_freq" : 20,
+        "max_freq" : 9.0,
+        "n_freq" : 10,
         "scale": 10,
         "shared_hidden_dim" : 512,
         "hidden_dim" : 256,
@@ -37,7 +37,7 @@ test_config = {
         "type": "test",
         "loss_function": "mse_ssim", #ssim_L1, L1, ssim, mse_loss, mse_ssim
         "lamba": 0.8, # there will be lamba ssim 
-        "iterations": 10000,
+        "iterations": 300,
         "mean_lr": 0.01,
         "mlp_lr": 0.01,
         "device": "cuda:0",
@@ -49,19 +49,20 @@ test_config = {
         "sample_every": 1,
         "strategy": "importance",
         "alpha": 0.05,
-        "resolution": 250,
-        "num_samples": 40000,
+        "resolution": 64,
+        "num_samples": 100000,
         "filter": False,
-        "randomize": False,
-        "min_temp": 2.0,
+        "randomize": True,
+        "min_temp": 1.5,
         "max_temp": 3.0,
-        "ema_decay": 0.2,
+        "ema_decay": 0.9,
         "alt": False,
-        "allow_logging": True,
+        "allow_logging": False,
         "factor": 3,
         "save_history": False,
         "background": "random",
         "image_type": "uint8",
+        "save_model": True,
         "lrs": {
             "quat": 0.00089,
             #"rgb": 0.0000000001,
@@ -71,7 +72,7 @@ test_config = {
             "scale": 0.0014,
             #"layers": 0.0006424
             "layers": 0.001
-        }
+        },
     },
     "data_collector": {
         "type": "test",
@@ -101,7 +102,7 @@ def normal_run(config_dir = None, data_dir = None):
     torch.cuda.empty_cache()
     start = time.time()
     loss = runner.run_experiments()
-    print(loss)
+    print(f"Final loss: {loss}")
     end =  time.time() - start
     print(f"Time elapsed: {end} s, {end/60} min, {end/3600} h")
     print(f"Time per experiment: {end/len(runner.experiments)}")

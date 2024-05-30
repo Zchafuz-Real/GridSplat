@@ -63,8 +63,14 @@ class Runner:
             self.experiments.append(Experiment(config, names[config["name"]]))
 
     def run_experiments(self, trial = None):
+        import logging 
+        import torch 
+
+        logging.basicConfig(filename='error.log', level=logging.ERROR)
         self.initialize_experiments()
+
 
         for experiment in self.experiments:
             loss = experiment.run(trial)
+            
         return loss
