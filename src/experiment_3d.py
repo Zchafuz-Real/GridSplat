@@ -50,7 +50,7 @@ class Experiment:
 
     def setup_environment(self):
         print("Setup environment")
-        print(f"Sampling Strategy: {self.training_config["strategy"]}")
+        print(f"Sampling Strategy: {self.training_config['strategy']}")
         self.model = ModelFactory.create_model(self.model_config, self.experiment_name)
         self.sampling_strategy = StrategyFactory.create_strategy(self.training_config)
         self.data_loader = DataLoader(self.data_loader_config, self.data, self.device)

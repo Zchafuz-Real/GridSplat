@@ -37,7 +37,11 @@ test_config = {
         "type": "test",
         "loss_function": "mse_ssim", #ssim_L1, L1, ssim, mse_loss, mse_ssim
         "lamba": 0.8, # there will be lamba ssim 
+<<<<<<< HEAD
         "iterations": 300,
+=======
+        "iterations": 1000,
+>>>>>>> 99fd3427c634af5be19b649682b6097f8cc109de
         "mean_lr": 0.01,
         "mlp_lr": 0.01,
         "device": "cuda:0",
@@ -49,8 +53,13 @@ test_config = {
         "sample_every": 1,
         "strategy": "importance",
         "alpha": 0.05,
+<<<<<<< HEAD
         "resolution": 64,
         "num_samples": 100000,
+=======
+        "resolution": 32,
+        "num_samples": 40000,
+>>>>>>> 99fd3427c634af5be19b649682b6097f8cc109de
         "filter": False,
         "randomize": True,
         "min_temp": 1.5,
