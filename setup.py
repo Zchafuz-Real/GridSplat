@@ -13,7 +13,9 @@ setup(
         'imageio',
         'torchvision',
         'Pillow',
-        'matplotlib'
+        'matplotlib',
+        'scikit-learn',
+        'optuna'
     ],
     entry_points={
         'console_scripts': [

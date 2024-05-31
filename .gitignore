@@ -1,2 +1,8 @@
 configs/
 data_log/
+error.log
+tmux-server*
+*.pth
+switch_names.py
+src/__pycache__*
+data/
