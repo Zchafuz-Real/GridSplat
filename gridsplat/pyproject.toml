@@ -1,0 +1,12 @@
+[project]
+name = "gridsplat"
+version = "0.1.1"
+
+dependencies=[
+]
+
+[tool.setuptools.packages.find]
+include = ["gridsplat*"]
+
+[project.entry-points.'nerfstudio.method_configs']
+gridsplat = 'gridsplat.gridsplat_config:gridsplat_method'
