@@ -33,6 +33,7 @@ from pytorch_msssim import SSIM
 from torch.nn import Parameter
 from typing_extensions import Literal
 
+from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.scene_box import OrientedBox
@@ -45,6 +46,13 @@ from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils.colors import get_color
 from nerfstudio.utils.rich_utils import CONSOLE
 from gridsplat.gridsplat_field import GridsplatField
+from nerfstudio.field_components.spatial_distortions import SceneContraction
+
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+
+from src.sampling import StrategyFactory
 
 
 def random_quat_tensor(N):
@@ -166,6 +174,28 @@ class GridsplatModelConfig(ModelConfig):
     """
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="off"))
     """Config of the camera optimizer to use"""
+    disable_scene_contraction: bool = False
+    """Whether to disable scene contraction or not."""
+    implementation: Literal["tcnn", "torch"] = "tcnn"
+    """Which implementation to use for the model."""
+    appearance_embed_dim: int = 32
+    """Dimension of the appearance embedding."""
+    use_appearance_embedding: bool = False
+    """Whether to use an appearance embedding."""
+    hidden_dim: int = 64
+    """Dimension of hidden layers"""
+    hidden_dim_color: int = 64
+    """Dimension of hidden layers for color network"""
+    base_res: int = 16
+    """Resolution of the base grid for the hashgrid."""
+    max_res: int = 2048
+    """Maximum resolution of the hashmap for the base mlp."""
+    log2_hashmap_size: int = 19
+    """Size of the hashmap for the base mlp"""
+    features_per_level: int = 2
+    """Number of features per level in the hashgrid"""
+    num_points: int = 30_000
+    """Number of gaussians to use"""
 
 
 class GridsplatModel(Model):
@@ -202,19 +232,14 @@ class GridsplatModel(Model):
         self.field = GridsplatField(
             self.scene_box.aabb,
             hidden_dim=self.config.hidden_dim,
-            num_levels=self.config.num_levels,
             max_res=self.config.max_res,
             base_res=self.config.base_res,
             features_per_level=self.config.features_per_level,
             log2_hashmap_size=self.config.log2_hashmap_size,
             hidden_dim_color=self.config.hidden_dim_color,
-            hidden_dim_transient=self.config.hidden_dim_transient,
             spatial_distortion=scene_contraction,
             num_images=self.num_train_data,
-            use_pred_normals=self.config.predict_normals,
-            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
             appearance_embedding_dim=appearance_embedding_dim,
-            average_init_density=self.config.average_init_density,
             implementation=self.config.implementation,
         )
 
@@ -222,12 +247,29 @@ class GridsplatModel(Model):
             num_cameras=self.num_train_data, device="cpu"
         )
 
-        self.update_features()
+        # TODO: would be nice to have the config like the other components in nerfstudio
+        config = {
+            "strategy" : "importance",
+            "iterations": 10_000,
+            "resolution": 32,
+            "num_samples": self.config.num_points,
+            "device" : "cuda:0",
+            "factor": 1.0,
+            "bd": 2,
+            "min_temp": 1.5,
+            "max_temp": 3.0,
+            "ema_decay": 0.99,
+            "filter": False,
+            "randomize": True,
+            "alt": False,
+            "sample_every": 1,
+        }
+        self.sampler = StrategyFactory.create_strategy(config)
 
         self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
             num_cameras=self.num_train_data, device="cpu"
         )
-
+        
         # metrics
         from torchmetrics.image import PeakSignalNoiseRatio
         from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
@@ -245,64 +287,6 @@ class GridsplatModel(Model):
         else:
             self.background_color = get_color(self.config.background_color)
 
-    @property
-    def colors(self):
-        if self.config.sh_degree > 0:
-            return SH2RGB(self.features_dc)
-        else:
-            return torch.sigmoid(self.features_dc)
-
-    @property
-    def shs_0(self):
-        return self.features_dc
-
-    @property
-    def shs_rest(self):
-        return self.features_rest
-
-    @property
-    def num_points(self):
-        return self.means.shape[0]
-
-    @property
-    def means(self):
-        return self.gauss_params["means"]
-
-    @property
-    def scales(self):
-        return self.gauss_params["scales"]
-
-    @property
-    def quats(self):
-        return self.gauss_params["quats"]
-
-    @property
-    def features_dc(self):
-        return self.gauss_params["features_dc"]
-
-    @property
-    def features_rest(self):
-        return self.gauss_params["features_rest"]
-
-    @property
-    def opacities(self):
-        return self.gauss_params["opacities"]
-
-    def load_state_dict(self, dict, **kwargs):  # type: ignore
-        # resize the parameters to match the new number of points
-        self.step = 30000
-        if "means" in dict:
-            # For backwards compatibility, we remap the names of parameters from
-            # means->gauss_params.means since old checkpoints have that format
-            for p in ["means", "scales", "quats", "features_dc", "features_rest", "opacities"]:
-                dict[f"gauss_params.{p}"] = dict[p]
-        newp = dict["gauss_params.means"].shape[0]
-        for name, param in self.gauss_params.items():
-            old_shape = param.shape
-            new_shape = (newp,) + old_shape[1:]
-            self.gauss_params[name] = torch.nn.Parameter(torch.zeros(new_shape, device=self.device))
-        super().load_state_dict(dict, **kwargs)
-
     def set_crop(self, crop_box: Optional[OrientedBox]):
         self.crop_box = crop_box
 
@@ -310,40 +294,40 @@ class GridsplatModel(Model):
         assert background_color.shape == (3,)
         self.background_color = background_color
     
-    def update_features(self):
+    def update_features(self, step: int):
         """ forward pass in the network to update gaussians"""
 
         # sample points
-        means = ...
+        with torch.no_grad():
+
+            if hasattr(self, "gauss_params"):
+                opacities = self.gauss_params["opacities"]
+                means = self.gauss_params["means"]
+            else:
+                # if we we don't have an
+                opacities = torch.zeros(self.config.num_points, device=self.device)
+                means = torch.rand(self.config.num_points, 3, device=self.device) * self.config.random_scale
+
+            means = self.sampler.update_and_sample(step, means, opacities)
 
         # compute gaussians
-        out = ...
+        self.gauss_params = self.field.get_outputs(means)
+        self.gauss_params["means"] = means
 
-        scales = self.scale_head(out)
-        quats = self.quat_head(out)
-        features_dc = self.dc_head(out)
-        features_rest = self.rest_head(out)
-        opacities = self.opacity_head(out)
 
-        self.gauss_params = torch.nn.ParameterDict(
-            {
-                "means": means,
-                "scales": scales,
-                "quats": quats,
-                "features_dc": features_dc,
-                "features_rest": features_rest,
-                "opacities": opacities,
-            }
-        )
+    def get_param_groups(self) -> Dict[str, List[Parameter]]:
+        param_groups = {}
+        param_groups["fields"] = list(self.field.parameters())
+        self.camera_optimizer.get_param_groups(param_groups=param_groups)
+        return param_groups
 
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
-        cbs = []
-        cbs.append(
+        cbs = [
             TrainingCallback([TrainingCallbackLocation.BEFORE_TRAIN_ITERATION], self.step_cb),
             TrainingCallback([TrainingCallbackLocation.BEFORE_TRAIN_ITERATION], self.update_features),
-        )
+        ]
 
         return cbs
 
@@ -433,21 +417,18 @@ class GridsplatModel(Model):
         self.last_size = (H, W)
 
         if crop_ids is not None:
-            opacities_crop = self.opacities[crop_ids]
-            means_crop = self.means[crop_ids]
-            features_dc_crop = self.features_dc[crop_ids]
-            features_rest_crop = self.features_rest[crop_ids]
-            scales_crop = self.scales[crop_ids]
-            quats_crop = self.quats[crop_ids]
+            opacities_crop = self.gauss_params["opacities"][crop_ids]
+            means_crop = self.gauss_params["means"][crop_ids]
+            colors_crop = self.gauss_params[FieldHeadNames.RGB][crop_ids]
+            scales_crop = self.gauss_params["scales"][crop_ids]
+            quats_crop = self.gauss_params["quats"][crop_ids]
         else:
-            opacities_crop = self.opacities
-            means_crop = self.means
-            features_dc_crop = self.features_dc
-            features_rest_crop = self.features_rest
-            scales_crop = self.scales
-            quats_crop = self.quats
+            opacities_crop = self.gauss_params["opacities"]
+            means_crop = self.gauss_params["means"]
+            colors_crop = self.gauss_params[FieldHeadNames.RGB]
+            scales_crop = self.gauss_params["scales"]
+            quats_crop = self.gauss_params["quats"]
 
-        colors_crop = torch.cat((features_dc_crop[:, None, :], features_rest_crop), dim=1)
         BLOCK_WIDTH = 16  # this controls the tile size of rasterization, 16 is a good default
         self.xys, depths, self.radii, conics, comp, num_tiles_hit, cov3d = project_gaussians(  # type: ignore
             means_crop,
